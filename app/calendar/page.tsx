@@ -1,12 +1,10 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
-import { motion } from "framer-motion"
+import { useState, useEffect } from "react"
 import { CalendarView } from "@/components/calendar-view"
 import { GoogleCalendarModal } from "@/components/google-calendar-modal"
 import { CalendarSettings } from "@/components/calendar-settings"
 import { MobileNavigation } from "@/components/mobile-navigation"
-import { EnhancedAIAssistant } from "@/components/enhanced-ai-assistant"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/components/auth/auth-provider"
 import { Button } from "@/components/ui/button"
@@ -19,6 +17,7 @@ import {
   DropdownMenuTrigger 
 } from "@/components/ui/dropdown-menu"
 import { toast } from "@/hooks/use-toast"
+import { supabase } from "@/lib/supabase"
 
 type ViewType = 'day' | 'week' | 'month' | 'year'
 
@@ -28,8 +27,9 @@ export default function CalendarPage() {
   const [currentView, setCurrentView] = useState<ViewType>('month')
   const [showSettings, setShowSettings] = useState(false)
   const [isSyncing, setIsSyncing] = useState(false)
-  const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null)
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'success' | 'error'>('idle')
+  const [calendars, setCalendars] = useState<any[]>([])
+  const [loadingCalendars, setLoadingCalendars] = useState(true)
   const router = useRouter()
   const { user, loading } = useAuth()
 
@@ -49,63 +49,6 @@ export default function CalendarPage() {
     setShowSettings(false)
   }
 
-  // Sync Google Calendar
-  const syncGoogleCalendar = async () => {
-    if (isSyncing) return
-    
-    setIsSyncing(true)
-    setSyncStatus('syncing')
-    
-    try {
-      console.log('Starting manual calendar sync...')
-      
-      const response = await fetch('/api/calendar/sync', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        }
-      })
-      
-      console.log('Sync response status:', response.status)
-      
-      if (response.ok) {
-        const result = await response.json()
-        console.log('Sync result:', result)
-        setSyncStatus('success')
-        setLastSyncTime(new Date())
-        toast({
-          title: "Calendar Synced",
-          description: `Successfully synced ${result.totalEvents} events from ${result.calendarsCount} calendars`,
-        })
-        
-        // Refresh the page to show new events
-        window.location.reload()
-      } else {
-        const errorData = await response.json()
-        console.error('Sync failed:', errorData)
-        setSyncStatus('error')
-        toast({
-          title: "Sync Failed",
-          description: errorData.error || "Failed to sync Google Calendar",
-          variant: "destructive"
-        })
-      }
-    } catch (error) {
-      console.error('Sync error:', error)
-      setSyncStatus('error')
-      toast({
-        title: "Sync Error",
-        description: "Network error while syncing calendar",
-        variant: "destructive"
-      })
-    } finally {
-      setIsSyncing(false)
-      // Reset status after 5 seconds
-      setTimeout(() => setSyncStatus('idle'), 5000)
-    }
-  }
-
-  // Navigation functions
   const goToToday = () => {
     setCurrentDate(new Date())
   }
@@ -148,57 +91,6 @@ export default function CalendarPage() {
     setCurrentDate(newDate)
   }
 
-  // Keyboard shortcuts
-  const handleKeyDown = useCallback((event: KeyboardEvent) => {
-    if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
-      return // Don't handle shortcuts when typing in inputs
-    }
-
-    switch (event.key.toLowerCase()) {
-      case 'm':
-        setCurrentView('month')
-        break
-      case 'w':
-        setCurrentView('week')
-        break
-      case 'd':
-        setCurrentView('day')
-        break
-      case 'y':
-        setCurrentView('year')
-        break
-      case 't':
-        goToToday()
-        break
-      case 'arrowleft':
-        navigatePrevious()
-        break
-      case 'arrowright':
-        navigateNext()
-        break
-      case 'c':
-        if (event.ctrlKey || event.metaKey) return // Don't interfere with copy
-        setSelectedDate(new Date())
-        break
-    }
-  }, [currentView, currentDate])
-
-  useEffect(() => {
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [handleKeyDown])
-
-  useEffect(() => {
-    if (!loading && !user) {
-      router.push("/auth")
-    }
-  }, [user, loading, router])
-
-  useEffect(() => {
-    // Scroll to top when page loads
-    window.scrollTo({ top: 0, left: 0, behavior: 'instant' })
-  }, [])
-
   const formatDateRange = () => {
     switch (currentView) {
       case 'day':
@@ -215,9 +107,11 @@ export default function CalendarPage() {
         endOfWeek.setDate(startOfWeek.getDate() + 6)
         
         if (startOfWeek.getMonth() === endOfWeek.getMonth()) {
-          return `${startOfWeek.toLocaleDateString('en-US', { month: 'long' })} ${startOfWeek.getDate()} – ${endOfWeek.getDate()}, ${startOfWeek.getFullYear()}`
+          const weekRange = startOfWeek.toLocaleDateString('en-US', { month: 'long' }) + ' ' + startOfWeek.getDate() + ' – ' + endOfWeek.getDate() + ', ' + startOfWeek.getFullYear()
+          return weekRange
         } else {
-          return `${startOfWeek.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${endOfWeek.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}, ${startOfWeek.getFullYear()}`
+          const weekRange = startOfWeek.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' – ' + endOfWeek.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ', ' + startOfWeek.getFullYear()
+          return weekRange
         }
       case 'month':
         return currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
@@ -227,6 +121,181 @@ export default function CalendarPage() {
         return ''
     }
   }
+
+  const loadCalendars = async () => {
+    try {
+      setLoadingCalendars(true)
+      const { data: { session } } = await supabase.auth.getSession()
+      
+      const response = await fetch('/api/calendars', {
+        headers: {
+          'Authorization': session?.access_token ? `Bearer ${session.access_token}` : ''
+        }
+      })
+      
+      if (response.ok) {
+        const data = await response.json()
+        setCalendars(data.calendars || [])
+      } else {
+        console.error('Failed to load calendars:', response.statusText)
+        setCalendars([])
+      }
+    } catch (error) {
+      console.error('Error loading calendars:', error)
+      setCalendars([])
+    } finally {
+      setLoadingCalendars(false)
+    }
+  }
+
+  const toggleCalendarVisibility = async (calendarId: string, isVisible: boolean) => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      
+      const response = await fetch('/api/calendars', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': session?.access_token ? `Bearer ${session.access_token}` : ''
+        },
+        body: JSON.stringify({
+          calendarId,
+          updates: { is_visible: isVisible }
+        })
+      })
+      
+      if (response.ok) {
+        setCalendars(prev => prev.map(cal => 
+          cal.id === calendarId ? { ...cal, is_visible: isVisible } : cal
+        ))
+      }
+    } catch (error) {
+      console.error('Error updating calendar visibility:', error)
+    }
+  }
+
+  const syncGoogleCalendar = async () => {
+    if (isSyncing) return
+    
+    setIsSyncing(true)
+    setSyncStatus('syncing')
+    
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      
+      const response = await fetch('/api/calendar/sync', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': session?.access_token ? `Bearer ${session.access_token}` : ''
+        }
+      })
+      
+      if (response.ok) {
+        const result = await response.json()
+        setSyncStatus('success')
+        const message = 'Successfully synced ' + result.calendarsCount + ' calendars and ' + result.totalEvents + ' events'
+        toast({
+          title: "Calendar Synced",
+          description: message,
+        })
+        loadCalendars()
+        // Reload the calendar view to show new events
+        window.dispatchEvent(new Event('calendarEventCreated'))
+      } else {
+        const errorData = await response.json()
+        setSyncStatus('error')
+        toast({
+          title: "Sync Failed",
+          description: errorData.error || "Failed to sync Google Calendar",
+          variant: "destructive"
+        })
+      }
+    } catch (error) {
+      setSyncStatus('error')
+      console.error('Sync error:', error)
+      toast({
+        title: "Sync Error",
+        description: "Network error while syncing calendar",
+        variant: "destructive"
+      })
+    } finally {
+      setIsSyncing(false)
+      setTimeout(() => setSyncStatus('idle'), 5000)
+    }
+  }
+
+  const clearTableErrorAndRetry = () => {
+    toast({
+      title: "Retrying Sync",
+      description: "Attempting to sync again...",
+    })
+    syncGoogleCalendar()
+  }
+
+  useEffect(() => {
+    if (!loading && !user) {
+      router.push("/auth")
+    }
+  }, [user, loading, router])
+
+  useEffect(() => {
+    if (user && !loading) {
+      loadCalendars()
+      syncGoogleCalendar()
+      
+      // Set up automatic sync every 10 minutes
+      const syncInterval = setInterval(() => {
+        syncGoogleCalendar()
+      }, 10 * 60 * 1000) // 10 minutes
+      
+      return () => clearInterval(syncInterval)
+    }
+  }, [user, loading])
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      // Only trigger if not typing in an input field
+      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
+        return
+      }
+      
+      switch (event.key.toLowerCase()) {
+        case 'm':
+          setCurrentView('month')
+          break
+        case 'w':
+          setCurrentView('week')
+          break
+        case 'd':
+          setCurrentView('day')
+          break
+        case 'y':
+          setCurrentView('year')
+          break
+        case 't':
+          // 't' for today
+          setCurrentDate(new Date())
+          break
+        case 'j':
+        case 'arrowleft':
+          // Navigate previous
+          navigatePrevious()
+          break
+        case 'k':
+        case 'arrowright':
+          // Navigate next
+          navigateNext()
+          break
+        default:
+          return
+      }
+      event.preventDefault()
+    }
+
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [currentView, currentDate])
 
   if (loading) {
     return (
@@ -243,10 +312,8 @@ export default function CalendarPage() {
 
   return (
     <div className="min-h-screen bg-white dark:bg-gray-950">
-      {/* Single Header - Google Calendar Style */}
       <header className="border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
         <div className="flex items-center justify-between px-6 py-3">
-          {/* Left section */}
           <div className="flex items-center space-x-6">
             <div className="flex items-center space-x-3">
               <Calendar className="w-6 h-6 text-blue-600 dark:text-blue-400" />
@@ -270,7 +337,6 @@ export default function CalendarPage() {
             </h2>
           </div>
 
-          {/* Right section */}
           <div className="flex items-center space-x-3">
             <Button 
               variant="ghost" 
@@ -334,9 +400,7 @@ export default function CalendarPage() {
       </header>
 
       <div className="flex h-[calc(100vh-65px)]">
-        {/* Left Sidebar - Google Calendar Style */}
         <div className="hidden lg:flex w-64 bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-700 flex-col">
-          {/* Create Button */}
           <div className="p-4">
             <Button 
               onClick={() => setSelectedDate(new Date())} 
@@ -372,32 +436,59 @@ export default function CalendarPage() {
                   </div>
                 ))}
                 {/* Mini calendar days */}
-                {Array.from({ length: 35 }, (_, i) => {
-                  const date = new Date(currentDate.getFullYear(), currentDate.getMonth(), i - 6)
-                  const isCurrentMonth = date.getMonth() === currentDate.getMonth()
-                  const isToday = date.toDateString() === new Date().toDateString()
-                  const isSelected = date.toDateString() === currentDate.toDateString()
+                {(() => {
+                  const year = currentDate.getFullYear()
+                  const month = currentDate.getMonth()
+                  const firstDay = new Date(year, month, 1).getDay()
+                  const daysInMonth = new Date(year, month + 1, 0).getDate()
+                  const prevMonth = new Date(year, month, 0)
+                  const daysInPrevMonth = prevMonth.getDate()
                   
-                  return (
-                    <button
-                      key={i}
-                      onClick={() => setCurrentDate(date)}
-                      className={`
-                        text-xs h-6 w-6 rounded-full flex items-center justify-center hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors
-                        ${!isCurrentMonth ? 'text-gray-400 dark:text-gray-600' : 'text-gray-900 dark:text-gray-100'}
-                        ${isToday ? 'bg-blue-600 text-white hover:bg-blue-700' : ''}
-                        ${isSelected && !isToday ? 'bg-gray-200 dark:bg-gray-700' : ''}
-                      `}
-                    >
-                      {date.getDate()}
-                    </button>
-                  )
-                })}
+                  const days = []
+                  
+                  // Previous month days
+                  for (let i = firstDay - 1; i >= 0; i--) {
+                    const date = new Date(year, month - 1, daysInPrevMonth - i)
+                    days.push({ date, isCurrentMonth: false })
+                  }
+                  
+                  // Current month days
+                  for (let i = 1; i <= daysInMonth; i++) {
+                    const date = new Date(year, month, i)
+                    days.push({ date, isCurrentMonth: true })
+                  }
+                  
+                  // Next month days to fill the grid
+                  const remainingDays = 35 - days.length
+                  for (let i = 1; i <= remainingDays; i++) {
+                    const date = new Date(year, month + 1, i)
+                    days.push({ date, isCurrentMonth: false })
+                  }
+                  
+                  return days.map((day, i) => {
+                    const isToday = day.date.toDateString() === new Date().toDateString()
+                    const isSelected = day.date.toDateString() === currentDate.toDateString()
+                    
+                    return (
+                      <button
+                        key={i}
+                        onClick={() => setCurrentDate(day.date)}
+                        className={`
+                          text-xs h-6 w-6 rounded-full flex items-center justify-center hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors
+                          ${!day.isCurrentMonth ? 'text-gray-400 dark:text-gray-600' : 'text-gray-900 dark:text-gray-100'}
+                          ${isToday ? 'bg-blue-600 text-white hover:bg-blue-700' : ''}
+                          ${isSelected && !isToday ? 'bg-gray-200 dark:bg-gray-700' : ''}
+                        `}
+                      >
+                        {day.date.getDate()}
+                      </button>
+                    )
+                  })
+                })()}
               </div>
             </div>
           </div>
 
-          {/* Search */}
           <div className="px-4 pb-6">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
@@ -409,9 +500,7 @@ export default function CalendarPage() {
             </div>
           </div>
 
-          {/* Scrollable calendar lists */}
           <div className="flex-1 overflow-y-auto">
-            {/* My Calendars */}
             <div className="px-4 pb-6">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-sm font-medium text-gray-900 dark:text-white">My calendars</h3>
@@ -420,26 +509,32 @@ export default function CalendarPage() {
                 </Button>
               </div>
               <div className="space-y-2">
-                <div className="flex items-center space-x-3 py-1 px-2 rounded hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer">
-                  <input type="checkbox" defaultChecked className="w-3 h-3 rounded text-blue-600" />
-                  <div className="w-3 h-3 bg-blue-500 rounded-sm"></div>
-                  <span className="text-sm text-gray-700 dark:text-gray-300 truncate">Personal</span>
-                </div>
-                <div className="flex items-center space-x-3 py-1 px-2 rounded hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer">
-                  <input type="checkbox" defaultChecked className="w-3 h-3 rounded text-green-600" />
-                  <div className="w-3 h-3 bg-green-500 rounded-sm"></div>
-                  <span className="text-sm text-gray-700 dark:text-gray-300 truncate">Work</span>
-                </div>
-                <div className="flex items-center space-x-3 py-1 px-2 rounded hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer">
-                  <input type="checkbox" defaultChecked className="w-3 h-3 rounded text-red-600" />
-                  <div className="w-3 h-3 bg-red-500 rounded-sm"></div>
-                  <span className="text-sm text-gray-700 dark:text-gray-300 truncate">Health</span>
-                </div>
-                <div className="flex items-center space-x-3 py-1 px-2 rounded hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer">
-                  <input type="checkbox" defaultChecked className="w-3 h-3 rounded text-purple-600" />
-                  <div className="w-3 h-3 bg-purple-500 rounded-sm"></div>
-                  <span className="text-sm text-gray-700 dark:text-gray-300 truncate">Social</span>
-                </div>
+                {loadingCalendars ? (
+                  <div className="text-sm text-gray-500 dark:text-gray-400">Loading calendars...</div>
+                ) : calendars.length === 0 ? (
+                  <div className="text-sm text-gray-500 dark:text-gray-400">No calendars found. Try syncing your Google Calendar.</div>
+                ) : (
+                  calendars
+                    .filter(cal => cal.source === 'google' && !cal.name.includes('Holidays'))
+                    .map(calendar => (
+                      <div key={calendar.id} className="flex items-center space-x-3 py-1 px-2 rounded hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer">
+                        <input 
+                          type="checkbox" 
+                          checked={calendar.is_visible} 
+                          onChange={(e) => toggleCalendarVisibility(calendar.id, e.target.checked)}
+                          className="w-3 h-3 rounded" 
+                          style={{ accentColor: calendar.color }}
+                        />
+                        <div 
+                          className="w-3 h-3 rounded-sm" 
+                          style={{ backgroundColor: calendar.color }}
+                        ></div>
+                        <span className="text-sm text-gray-700 dark:text-gray-300 truncate" title={calendar.name}>
+                          {calendar.name}
+                        </span>
+                      </div>
+                    ))
+                )}
               </div>
             </div>
 
@@ -457,23 +552,33 @@ export default function CalendarPage() {
                 </div>
               </div>
               <div className="space-y-2">
-                <div className="flex items-center space-x-3 py-1 px-2 rounded hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer">
-                  <input type="checkbox" defaultChecked className="w-3 h-3 rounded text-green-600" />
-                  <div className="w-3 h-3 bg-green-600 rounded-sm"></div>
-                  <span className="text-sm text-gray-700 dark:text-gray-300 truncate">Holidays in United States</span>
-                </div>
-                <div className="flex items-center space-x-3 py-1 px-2 rounded hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer">
-                  <input type="checkbox" className="w-3 h-3 rounded text-orange-600" />
-                  <div className="w-3 h-3 bg-orange-500 rounded-sm"></div>
-                  <span className="text-sm text-gray-700 dark:text-gray-300 truncate">Birthdays</span>
-                </div>
+                {calendars
+                  .filter(cal => cal.source === 'google' && (cal.name.includes('Holidays') || cal.name.includes('Birthdays')))
+                  .map(calendar => (
+                    <div key={calendar.id} className="flex items-center space-x-3 py-1 px-2 rounded hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer">
+                      <input 
+                        type="checkbox" 
+                        checked={calendar.is_visible} 
+                        onChange={(e) => toggleCalendarVisibility(calendar.id, e.target.checked)}
+                        className="w-3 h-3 rounded" 
+                        style={{ accentColor: calendar.color }}
+                      />
+                      <div 
+                        className="w-3 h-3 rounded-sm" 
+                        style={{ backgroundColor: calendar.color }}
+                      ></div>
+                      <span className="text-sm text-gray-700 dark:text-gray-300 truncate" title={calendar.name}>
+                        {calendar.name}
+                      </span>
+                    </div>
+                  ))
+                }
               </div>
             </div>
           </div>
         </div>
 
-        {/* Main Calendar Content */}
-        <div className="flex-1 flex flex-col bg-white dark:bg-gray-900">
+        <div className="flex-1 flex flex-col bg-white dark:bg-gray-900 overflow-hidden">
           <CalendarView 
             currentDate={currentDate}
             currentView={currentView}
@@ -483,22 +588,9 @@ export default function CalendarPage() {
         </div>
       </div>
 
-      {/* Event Modal */}
       {selectedDate && <GoogleCalendarModal selectedDate={selectedDate} onClose={handleCloseModal} />}
-
-      {/* Settings Modal */}
       {showSettings && <CalendarSettings onClose={handleCloseSettings} />}
-
-      {/* Mobile Navigation */}
       <MobileNavigation />
-
-      {/* AI Assistant */}
-      <EnhancedAIAssistant />
-
-      {/* Keyboard shortcuts hint */}
-      <div className="fixed bottom-4 right-4 bg-black/80 text-white text-xs px-3 py-2 rounded-lg opacity-0 hover:opacity-100 transition-opacity pointer-events-none">
-        Press M/W/D/Y to switch views, T for today, ← → to navigate
-      </div>
     </div>
   )
-}
+} 

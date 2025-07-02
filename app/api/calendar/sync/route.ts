@@ -3,13 +3,67 @@ import { createClient } from '@supabase/supabase-js'
 import { cookies } from 'next/headers'
 import { listEvents, getCalendarList } from '@/lib/googleCalendar'
 
+// Google Calendar color mapping to match Google's official colors
+const GOOGLE_CALENDAR_COLORS: { [key: string]: string } = {
+  '1': '#a4bdfc', // Lavender
+  '2': '#7ae7bf', // Sage  
+  '3': '#dbadff', // Grape
+  '4': '#ff887c', // Flamingo
+  '5': '#fbd75b', // Banana
+  '6': '#ffb878', // Tangerine
+  '7': '#46d6db', // Peacock
+  '8': '#e1e1e1', // Graphite
+  '9': '#5484ed', // Blueberry
+  '10': '#51b749', // Basil
+  '11': '#dc2127', // Tomato
+  'default': '#1a73e8' // Default Blue
+}
+
+const getCalendarColor = (calendar: any): string => {
+  // Use colorId first if available
+  if (calendar.colorId && GOOGLE_CALENDAR_COLORS[calendar.colorId]) {
+    return GOOGLE_CALENDAR_COLORS[calendar.colorId]
+  }
+  
+  // Fallback to backgroundColor if available
+  if (calendar.backgroundColor) {
+    return calendar.backgroundColor
+  }
+  
+  // Default color
+  return GOOGLE_CALENDAR_COLORS.default
+}
+
+async function ensureCalendarsTable(supabase: any) {
+  // Check if table exists by trying to select from it
+  const { error: checkError } = await supabase
+    .from('calendars')
+    .select('id')
+    .limit(1)
+
+  if (checkError && checkError.code === '42P01') {
+    // Table does not exist
+    console.log('"calendars" table not found. Calendar metadata will not be synced.')
+    console.log('To sync calendar metadata, please create the table using create-calendars-table-manual.sql')
+    return false
+  } else if (checkError) {
+    console.error('Error checking for "calendars" table:', checkError)
+    return false
+  }
+  
+  return true
+}
+
 export async function POST(request: NextRequest) {
   try {
     // Create Supabase client with service role for admin access
     const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
+      "https://wyzllktxgkmfkbhgyhsf.supabase.co",
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind5emxsa3R4Z2ttZmtiaGd5aHNmIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1MDYxMTExOSwiZXhwIjoyMDY2MTg3MTE5fQ.EW7Mxk3ETm9tH-cZw9F_wV0vMY6BDwo9jY6hcpMDL84"
     )
+    
+    // Ensure the calendars table exists before proceeding
+    const hasCalendarsTable = await ensureCalendarsTable(supabase)
     
     // Get user authentication
     const authorization = request.headers.get('Authorization')
@@ -86,6 +140,72 @@ export async function POST(request: NextRequest) {
     const calendars = await getCalendarList(tokens)
     console.log(`Found ${calendars.length} calendars for user ${user.id}`)
     
+    // First, sync calendar metadata (only if table exists)
+    const calendarSyncResults = []
+    
+    if (hasCalendarsTable) {
+      console.log('Syncing calendar metadata...')
+      
+      for (const calendar of calendars) {
+        if (!calendar.id) continue
+        
+        try {
+          const calendarColor = getCalendarColor(calendar)
+          
+          const calendarData = {
+            user_id: user.id,
+            google_calendar_id: calendar.id,
+            name: calendar.summary || 'Untitled Calendar',
+            description: calendar.description || '',
+            color: calendarColor,
+            background_color: calendar.backgroundColor || calendarColor,
+            foreground_color: calendar.foregroundColor || '#000000',
+            is_primary: calendar.primary || false,
+            access_role: calendar.accessRole || 'reader',
+            timezone: calendar.timeZone || 'UTC',
+            summary: calendar.summary || '',
+            location: calendar.location || '',
+            is_visible: true,
+            is_selected: true,
+            source: 'google'
+          }
+          
+          // Upsert calendar (insert or update if exists)
+          const { error: calendarError } = await supabase
+            .from('calendars')
+            .upsert(calendarData, { 
+              onConflict: 'user_id,google_calendar_id',
+              ignoreDuplicates: false 
+            })
+          
+          if (calendarError) {
+            console.error(`Error upserting calendar ${calendar.summary}:`, calendarError)
+            calendarSyncResults.push({
+              calendar: calendar.summary,
+              success: false,
+              error: calendarError.message
+            })
+          } else {
+            console.log(`Successfully synced calendar: ${calendar.summary}`)
+            calendarSyncResults.push({
+              calendar: calendar.summary,
+              success: true,
+              color: calendarColor
+            })
+          }
+        } catch (error) {
+          console.error(`Error syncing calendar metadata for ${calendar.summary}:`, error)
+          calendarSyncResults.push({
+            calendar: calendar.summary,
+            success: false,
+            error: error instanceof Error ? error.message : String(error)
+          })
+        }
+      }
+    } else {
+      console.log('Skipping calendar metadata sync - calendars table does not exist')
+    }
+    
     let totalEventsSynced = 0
     const syncResults = []
     
@@ -128,6 +248,9 @@ export async function POST(request: NextRequest) {
             allDay = false
           }
           
+          // Get the proper calendar color
+          const calendarColor = getCalendarColor(calendar)
+          
           // Create event object with the correct column names from the database
           return {
             user_id: user.id,
@@ -143,7 +266,7 @@ export async function POST(request: NextRequest) {
             status: event.status || 'confirmed',
             source: 'google',
             flag: calendar.summary || 'Google Calendar',
-            flag_color: calendar.backgroundColor || '#1a73e8',
+            flag_color: calendarColor,
             created_at: event.created || new Date().toISOString(),
             updated_at: event.updated || new Date().toISOString()
           }
@@ -213,10 +336,11 @@ export async function POST(request: NextRequest) {
     
     return NextResponse.json({
       success: true,
-      message: `Successfully synced ${totalEventsSynced} events from ${calendars.length} calendars`,
+      message: `Successfully synced ${calendars.length} calendars and ${totalEventsSynced} events`,
       totalEvents: totalEventsSynced,
       calendarsCount: calendars.length,
-      syncResults: syncResults
+      calendarsSync: calendarSyncResults,
+      eventsSync: syncResults
     })
     
   } catch (error) {

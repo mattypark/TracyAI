@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { EventDetailsPopup } from "./event-details-popup"
 import { EventEditModal } from "./event-edit-modal"
+import { EventsListModal } from "./events-list-modal"
 
 interface CalendarEvent {
   id: string
@@ -35,6 +36,7 @@ export function CalendarView({ currentDate, currentView, onDateClick, onDateChan
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null)
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null)
   const [popupPosition, setPopupPosition] = useState({ x: 0, y: 0 })
+  const [eventsListModal, setEventsListModal] = useState<{ date: Date; events: CalendarEvent[] } | null>(null)
 
   useEffect(() => {
     loadEvents()
@@ -128,6 +130,35 @@ export function CalendarView({ currentDate, currentView, onDateClick, onDateChan
     }
   }
 
+  const formatEventTime = (startTime: string, endTime: string, allDay: boolean) => {
+    if (allDay) return "All day"
+    
+    const start = new Date(startTime)
+    const end = new Date(endTime)
+    
+    const startStr = start.toLocaleTimeString('en-US', { 
+      hour: 'numeric', 
+      minute: '2-digit',
+      hour12: true 
+    })
+    
+    // If same day and less than 24 hours, show end time
+    if (end.getTime() - start.getTime() < 24 * 60 * 60 * 1000) {
+      const endStr = end.toLocaleTimeString('en-US', { 
+        hour: 'numeric', 
+        minute: '2-digit',
+        hour12: true 
+      })
+      return `${startStr} - ${endStr}`
+    }
+    
+    return startStr
+  }
+
+  const showEventsListModal = (date: Date, events: CalendarEvent[]) => {
+    setEventsListModal({ date, events })
+  }
+
   const isToday = (date: Date) => {
     const today = new Date()
     return (
@@ -138,17 +169,23 @@ export function CalendarView({ currentDate, currentView, onDateClick, onDateChan
   }
 
   const getFlagColorClass = (color: string) => {
-    const colorMap: { [key: string]: string } = {
-      red: "bg-red-500",
-      blue: "bg-blue-500",
-      green: "bg-green-500",
-      yellow: "bg-yellow-500",
-      purple: "bg-purple-500",
-      orange: "bg-orange-500",
-      pink: "bg-pink-500",
-      indigo: "bg-indigo-500",
+    // If it's already a hex color, return it directly for inline styles
+    if (color.startsWith('#')) {
+      return color
     }
-    return colorMap[color] || "bg-gray-500"
+    
+    // Fallback for old color names - return hex colors
+    const colorMap: { [key: string]: string } = {
+      red: "#dc2127",
+      blue: "#1a73e8",
+      green: "#51b749",
+      yellow: "#fbd75b",
+      purple: "#dbadff",
+      orange: "#ffb878",
+      pink: "#ff887c",
+      indigo: "#5484ed",
+    }
+    return colorMap[color] || "#1a73e8"
   }
 
   const getEventsForDate = (date: Date) => {
@@ -201,26 +238,26 @@ export function CalendarView({ currentDate, currentView, onDateClick, onDateChan
           {weekdays.map((day) => (
             <div
               key={day}
-              className="py-3 text-center text-sm font-medium text-gray-600 dark:text-gray-400 border-r border-gray-200 dark:border-gray-700 last:border-r-0"
+              className="py-2 text-center text-sm font-medium text-gray-600 dark:text-gray-400 border-r border-gray-200 dark:border-gray-700 last:border-r-0"
             >
               {day}
             </div>
           ))}
         </div>
 
-        {/* Calendar Days */}
-        <div className="flex-1 grid grid-cols-7 auto-rows-fr">
+        {/* Calendar Days - Fixed height grid */}
+        <div className="flex-1 grid grid-cols-7 grid-rows-6 gap-0">
           {days.map((day, index) => (
             <div
               key={index}
-              className={`border-r border-b border-gray-200 dark:border-gray-700 last:border-r-0 p-2 min-h-[120px] cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors ${
+              className={`border-r border-b border-gray-200 dark:border-gray-700 last:border-r-0 p-1 min-h-0 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors ${
                 day.date ? "bg-white dark:bg-gray-900" : "bg-gray-50 dark:bg-gray-800"
               }`}
               onClick={() => day.date && onDateClick(day.date)}
             >
               {day.date && (
                 <div className="h-full flex flex-col">
-                  <div className="flex justify-between items-start mb-2">
+                  <div className="flex justify-between items-start mb-1">
                     <span
                       className={`text-sm font-medium ${
                         isToday(day.date)
@@ -232,24 +269,43 @@ export function CalendarView({ currentDate, currentView, onDateClick, onDateChan
                     </span>
                   </div>
 
-                  {/* Events */}
-                  <div className="flex-1 space-y-1 overflow-hidden">
-                    {day.events.slice(0, 3).map((event) => (
+                  {/* Events - Limited to prevent overflow */}
+                  <div className="flex-1 space-y-0.5 overflow-hidden">
+                    {day.events.slice(0, 2).map((event) => (
                       <div
                         key={event.id}
-                        className={`flex items-center space-x-1 text-xs p-1 rounded truncate cursor-pointer hover:opacity-80 ${
-                          event.all_day ? 'bg-blue-100 dark:bg-blue-900' : 'bg-gray-100 dark:bg-gray-800'
-                        }`}
+                        className={`text-xs p-1 rounded cursor-pointer hover:opacity-80 truncate`}
+                        style={{ 
+                          backgroundColor: getFlagColorClass(event.flag_color) + '40', // Add transparency
+                          borderLeft: `3px solid ${getFlagColorClass(event.flag_color)}`,
+                          color: '#333'
+                        }}
                         onClick={(e) => handleEventClick(event, e)}
                       >
-                        <div className={`w-2 h-2 rounded-full ${getFlagColorClass(event.flag_color)}`}></div>
-                        <span className="truncate font-medium">{event.title}</span>
+                        <div className="flex items-center gap-1">
+                          <span className="truncate font-medium">{event.title}</span>
+                        </div>
+                        {!event.all_day && (
+                          <div className="text-[10px] text-gray-500 dark:text-gray-400">
+                            {new Date(event.start_time).toLocaleTimeString('en-US', { 
+                              hour: 'numeric', 
+                              minute: '2-digit',
+                              hour12: true 
+                            })}
+                          </div>
+                        )}
                       </div>
                     ))}
-                    {day.events.length > 3 && (
-                      <div className="text-xs text-gray-500 dark:text-gray-400 pl-1">
-                        +{day.events.length - 3} more
-                      </div>
+                    {day.events.length > 2 && (
+                      <button
+                        className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          showEventsListModal(day.date, day.events)
+                        }}
+                      >
+                        +{day.events.length - 2} more
+                      </button>
                     )}
                   </div>
                 </div>
@@ -279,6 +335,55 @@ export function CalendarView({ currentDate, currentView, onDateClick, onDateChan
     const weekDays = getWeekDays()
     const hours = Array.from({ length: 24 }, (_, i) => i)
 
+    // Helper function to calculate event position and height
+    const getEventStyle = (event: CalendarEvent) => {
+      const start = new Date(event.start_time)
+      const end = new Date(event.end_time)
+      
+      const startHour = start.getHours() + start.getMinutes() / 60
+      const endHour = end.getHours() + end.getMinutes() / 60
+      
+      const top = startHour * 48 // 48px per hour
+      const height = Math.max((endHour - startHour) * 48, 20) // Minimum height of 20px
+      
+      return {
+        top: `${top}px`,
+        height: `${height}px`,
+        minHeight: '20px'
+      }
+    }
+
+    // Group overlapping events
+    const getEventColumns = (dayEvents: CalendarEvent[]) => {
+      const sortedEvents = [...dayEvents].sort((a, b) => 
+        new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
+      )
+      
+      const columns: CalendarEvent[][] = []
+      
+      sortedEvents.forEach(event => {
+        let placed = false
+        for (let i = 0; i < columns.length; i++) {
+          const column = columns[i]
+          const lastEvent = column[column.length - 1]
+          const lastEventEnd = new Date(lastEvent.end_time).getTime()
+          const eventStart = new Date(event.start_time).getTime()
+          
+          if (eventStart >= lastEventEnd) {
+            column.push(event)
+            placed = true
+            break
+          }
+        }
+        
+        if (!placed) {
+          columns.push([event])
+        }
+      })
+      
+      return columns
+    }
+
     return (
       <div className="h-full flex flex-col">
         {/* Header with days */}
@@ -300,34 +405,86 @@ export function CalendarView({ currentDate, currentView, onDateClick, onDateChan
 
         {/* Time grid */}
         <div className="flex-1 overflow-auto">
-          <div className="grid grid-cols-8 auto-rows-fr min-h-[1200px]">
-            {/* Time labels */}
-            <div className="w-16">
-              {hours.map((hour) => (
-                <div key={hour} className="h-12 border-b border-gray-200 dark:border-gray-700 text-xs text-gray-500 dark:text-gray-400 pr-2 text-right flex items-start pt-1">
-                  {hour === 0 ? '12 AM' : hour < 12 ? `${hour} AM` : hour === 12 ? '12 PM' : `${hour - 12} PM`}
-                </div>
-              ))}
-            </div>
-
-            {/* Day columns */}
-            {weekDays.map((day, dayIndex) => (
-              <div key={dayIndex} className="border-r border-gray-200 dark:border-gray-700 last:border-r-0">
+          <div className="relative">
+            <div className="grid grid-cols-8" style={{ height: `${24 * 48}px` }}>
+              {/* Time labels */}
+              <div className="w-16">
                 {hours.map((hour) => (
-                  <div
-                    key={hour}
-                    className="h-12 border-b border-gray-200 dark:border-gray-700 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
-                    onClick={() => {
-                      const clickedTime = new Date(day)
-                      clickedTime.setHours(hour, 0, 0, 0)
-                      onDateClick(clickedTime)
-                    }}
-                  >
-                    {/* Events would be positioned here */}
+                  <div key={hour} className="h-12 border-b border-gray-200 dark:border-gray-700 text-xs text-gray-500 dark:text-gray-400 pr-2 text-right">
+                    {hour === 0 ? '12 AM' : hour < 12 ? `${hour} AM` : hour === 12 ? '12 PM' : `${hour - 12} PM`}
                   </div>
                 ))}
               </div>
-            ))}
+
+              {/* Day columns */}
+              {weekDays.map((day, dayIndex) => {
+                const dayEvents = getEventsForDate(day).filter(event => !event.all_day)
+                const allDayEvents = getEventsForDate(day).filter(event => event.all_day)
+                const eventColumns = getEventColumns(dayEvents)
+                
+                return (
+                  <div key={dayIndex} className="border-r border-gray-200 dark:border-gray-700 last:border-r-0 relative">
+                    {/* Hour lines */}
+                    {hours.map((hour) => (
+                      <div
+                        key={hour}
+                        className="h-12 border-b border-gray-200 dark:border-gray-700"
+                      />
+                    ))}
+                    
+                    {/* All-day events at the top */}
+                    {allDayEvents.length > 0 && (
+                      <div className="absolute top-0 left-0 right-0 bg-blue-100 dark:bg-blue-900 border-b border-blue-200 dark:border-blue-800 p-1 z-20">
+                        {allDayEvents.map(event => (
+                          <div
+                            key={event.id}
+                            className="text-xs font-medium text-blue-800 dark:text-blue-200 truncate cursor-pointer hover:opacity-80"
+                            onClick={(e) => handleEventClick(event, e)}
+                          >
+                            {event.title}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    
+                    {/* Timed events */}
+                    {eventColumns.map((column, columnIndex) => {
+                      const columnWidth = 100 / eventColumns.length
+                      const leftOffset = columnIndex * columnWidth
+                      
+                      return column.map(event => {
+                        const style = getEventStyle(event)
+                        
+                        return (
+                          <div
+                            key={event.id}
+                            className="absolute cursor-pointer hover:opacity-90 rounded p-1 text-xs overflow-hidden z-10"
+                            style={{
+                              ...style,
+                              left: `${leftOffset}%`,
+                              width: `${columnWidth - 1}%`,
+                              backgroundColor: getFlagColorClass(event.flag_color),
+                              color: '#ffffff',
+                              borderLeft: `2px solid ${getFlagColorClass(event.flag_color)}`
+                            }}
+                            onClick={(e) => handleEventClick(event, e)}
+                          >
+                            <div className="font-medium truncate">{event.title}</div>
+                            <div className="text-[10px] opacity-90">
+                              {new Date(event.start_time).toLocaleTimeString('en-US', { 
+                                hour: 'numeric', 
+                                minute: '2-digit',
+                                hour12: true 
+                              })}
+                            </div>
+                          </div>
+                        )
+                      })
+                    })}
+                  </div>
+                )
+              })}
+            </div>
           </div>
         </div>
       </div>
@@ -337,7 +494,59 @@ export function CalendarView({ currentDate, currentView, onDateClick, onDateChan
   // Day View Component
   const DayView = () => {
     const hours = Array.from({ length: 24 }, (_, i) => i)
-    const dayEvents = getEventsForDate(currentDate)
+    const dayEvents = getEventsForDate(currentDate).filter(event => !event.all_day)
+    const allDayEvents = getEventsForDate(currentDate).filter(event => event.all_day)
+
+    // Helper function to calculate event position and height
+    const getEventStyle = (event: CalendarEvent) => {
+      const start = new Date(event.start_time)
+      const end = new Date(event.end_time)
+      
+      const startHour = start.getHours() + start.getMinutes() / 60
+      const endHour = end.getHours() + end.getMinutes() / 60
+      
+      const top = startHour * 48 // 48px per hour
+      const height = Math.max((endHour - startHour) * 48, 20) // Minimum height of 20px
+      
+      return {
+        top: `${top}px`,
+        height: `${height}px`,
+        minHeight: '20px'
+      }
+    }
+
+    // Group overlapping events
+    const getEventColumns = (events: CalendarEvent[]) => {
+      const sortedEvents = [...events].sort((a, b) => 
+        new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
+      )
+      
+      const columns: CalendarEvent[][] = []
+      
+      sortedEvents.forEach(event => {
+        let placed = false
+        for (let i = 0; i < columns.length; i++) {
+          const column = columns[i]
+          const lastEvent = column[column.length - 1]
+          const lastEventEnd = new Date(lastEvent.end_time).getTime()
+          const eventStart = new Date(event.start_time).getTime()
+          
+          if (eventStart >= lastEventEnd) {
+            column.push(event)
+            placed = true
+            break
+          }
+        }
+        
+        if (!placed) {
+          columns.push([event])
+        }
+      })
+      
+      return columns
+    }
+
+    const eventColumns = getEventColumns(dayEvents)
 
     return (
       <div className="h-full flex flex-col">
@@ -361,43 +570,72 @@ export function CalendarView({ currentDate, currentView, onDateClick, onDateChan
             {/* Time labels */}
             <div className="w-16">
               {hours.map((hour) => (
-                <div key={hour} className="h-12 border-b border-gray-200 dark:border-gray-700 text-xs text-gray-500 dark:text-gray-400 pr-2 text-right flex items-start pt-1">
+                <div key={hour} className="h-12 border-b border-gray-200 dark:border-gray-700 text-xs text-gray-500 dark:text-gray-400 pr-2 text-right">
                   {hour === 0 ? '12 AM' : hour < 12 ? `${hour} AM` : hour === 12 ? '12 PM' : `${hour - 12} PM`}
                 </div>
               ))}
             </div>
 
             {/* Day column */}
-            <div className="flex-1 border-r border-gray-200 dark:border-gray-700">
+            <div className="flex-1 border-r border-gray-200 dark:border-gray-700 relative" style={{ height: `${24 * 48}px` }}>
+              {/* Hour lines */}
               {hours.map((hour) => (
                 <div
                   key={hour}
-                  className="h-12 border-b border-gray-200 dark:border-gray-700 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors relative"
-                  onClick={() => {
-                    const clickedTime = new Date(currentDate)
-                    clickedTime.setHours(hour, 0, 0, 0)
-                    onDateClick(clickedTime)
-                  }}
-                >
-                  {/* Events would be positioned here */}
-                  {dayEvents
-                    .filter(event => new Date(event.start_time).getHours() === hour)
-                    .map(event => (
-                      <div
-                        key={event.id}
-                        className={`absolute left-1 right-1 top-1 bottom-1 rounded p-1 text-xs font-medium cursor-pointer hover:opacity-80 ${
-                          event.all_day ? 'bg-blue-100 dark:bg-blue-900' : 'bg-green-100 dark:bg-green-900'
-                        }`}
-                        onClick={(e) => handleEventClick(event, e)}
-                      >
-                        <div className="flex items-center space-x-1">
-                          <div className={`w-2 h-2 rounded-full ${getFlagColorClass(event.flag_color)}`}></div>
-                          <span className="truncate">{event.title}</span>
-                        </div>
-                      </div>
-                    ))}
-                </div>
+                  className="h-12 border-b border-gray-200 dark:border-gray-700"
+                />
               ))}
+              
+              {/* All-day events at the top */}
+              {allDayEvents.length > 0 && (
+                <div className="absolute top-0 left-0 right-0 bg-blue-100 dark:bg-blue-900 border-b border-blue-200 dark:border-blue-800 p-2 z-20">
+                  {allDayEvents.map(event => (
+                    <div
+                      key={event.id}
+                      className="text-sm font-medium text-blue-800 dark:text-blue-200 mb-1 cursor-pointer hover:opacity-80"
+                      onClick={(e) => handleEventClick(event, e)}
+                    >
+                      {event.title}
+                    </div>
+                  ))}
+                </div>
+              )}
+              
+              {/* Timed events */}
+              {eventColumns.map((column, columnIndex) => {
+                const columnWidth = 100 / eventColumns.length
+                const leftOffset = columnIndex * columnWidth
+                
+                return column.map(event => {
+                  const style = getEventStyle(event)
+                  
+                  return (
+                    <div
+                      key={event.id}
+                      className="absolute cursor-pointer hover:opacity-90 rounded p-2 overflow-hidden z-10"
+                      style={{
+                        ...style,
+                        left: `${leftOffset}%`,
+                        width: `${columnWidth - 1}%`,
+                        backgroundColor: getFlagColorClass(event.flag_color),
+                        color: '#ffffff',
+                        borderLeft: `3px solid ${getFlagColorClass(event.flag_color)}`
+                      }}
+                      onClick={(e) => handleEventClick(event, e)}
+                    >
+                      <div className="font-medium text-sm mb-1">{event.title}</div>
+                      <div className="text-xs opacity-90">
+                        {formatEventTime(event.start_time, event.end_time, false)}
+                      </div>
+                      {event.location && (
+                        <div className="text-xs opacity-75 truncate mt-1">
+                          📍 {event.location}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })
+              })}
             </div>
           </div>
         </div>
@@ -522,6 +760,24 @@ export function CalendarView({ currentDate, currentView, onDateClick, onDateChan
           event={editingEvent}
           onClose={() => setEditingEvent(null)}
           onSave={handleSaveEvent}
+        />
+      )}
+
+      {/* Events List Modal */}
+      {eventsListModal && (
+        <EventsListModal
+          date={eventsListModal.date}
+          events={eventsListModal.events}
+          onClose={() => setEventsListModal(null)}
+          onEventClick={handleEventClick}
+          onEditEvent={(event) => {
+            setEventsListModal(null)
+            handleEditEvent(event)
+          }}
+          onDeleteEvent={(eventId) => {
+            handleDeleteEvent(eventId)
+            setEventsListModal(null)
+          }}
         />
       )}
     </>
