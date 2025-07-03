@@ -84,15 +84,21 @@ export function CalendarView({ currentDate, currentView, onDateClick, onDateChan
   }, [events, calendars])
 
   useEffect(() => {
-    // Listen for calendar event creation to refresh the view
-    const handleEventCreated = () => {
+    // Reload events when any calendar related action occurs
+    const reload = () => {
       loadEvents()
     }
 
-    window.addEventListener('calendarEventCreated', handleEventCreated)
-    
+    window.addEventListener('calendarEventCreated', reload)
+    window.addEventListener('calendarEventUpdated', reload)
+    window.addEventListener('calendarEventDeleted', reload)
+    window.addEventListener('calendarEventsSynced', reload)
+
     return () => {
-      window.removeEventListener('calendarEventCreated', handleEventCreated)
+      window.removeEventListener('calendarEventCreated', reload)
+      window.removeEventListener('calendarEventUpdated', reload)
+      window.removeEventListener('calendarEventDeleted', reload)
+      window.removeEventListener('calendarEventsSynced', reload)
     }
   }, [])
 
@@ -173,15 +179,12 @@ export function CalendarView({ currentDate, currentView, onDateClick, onDateChan
         )
       )
       
-      setFilteredEvents(prevEvents => 
-        prevEvents.map(event => 
+      setFilteredEvents(prevEvents =>
+        prevEvents.map(event =>
           event.id === eventData.id ? updatedEvent.event : event
         )
       )
-      
-      // Then trigger a one-time sync with Google Calendar
-      window.dispatchEvent(new CustomEvent('calendarEventUpdated'))
-      
+
       // Show success toast
       const { toast } = await import('@/hooks/use-toast')
       toast({

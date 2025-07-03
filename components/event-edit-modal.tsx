@@ -104,8 +104,8 @@ export function EventEditModal({ event, onClose, onSave }: EventEditModalProps) 
       await onSave(eventData)
       onClose()
       
-      // Trigger a custom event to refresh the calendar view
-      window.dispatchEvent(new CustomEvent('calendarEventCreated'))
+      // Notify listeners that an event was updated
+      window.dispatchEvent(new CustomEvent('calendarEventUpdated'))
     } catch (error) {
       console.error("Error updating event:", error)
       alert(`Error updating event: ${error instanceof Error ? error.message : 'Unknown error'}`)

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { CalendarView } from "@/components/calendar-view"
 import { GoogleCalendarModal } from "@/components/google-calendar-modal"
 import { CalendarSettings } from "@/components/calendar-settings"
@@ -32,6 +32,7 @@ export default function CalendarPage() {
   const [loadingCalendars, setLoadingCalendars] = useState(true)
   const router = useRouter()
   const { user, loading } = useAuth()
+  const syncTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   const handleDateClick = (date: Date) => {
     setSelectedDate(date)
@@ -175,6 +176,10 @@ export default function CalendarPage() {
   }
 
   const syncGoogleCalendar = async () => {
+    if (syncTimeoutRef.current) {
+      clearTimeout(syncTimeoutRef.current)
+      syncTimeoutRef.current = null
+    }
     if (isSyncing) return
     
     setIsSyncing(true)
@@ -201,7 +206,9 @@ export default function CalendarPage() {
         })
         loadCalendars()
         // Reload the calendar view to show new events
-        window.dispatchEvent(new Event('calendarEventCreated'))
+        // Notify components that events have been refreshed without
+        // triggering another sync cycle
+        window.dispatchEvent(new Event('calendarEventsSynced'))
       } else {
         const errorData = await response.json()
         setSyncStatus('error')
@@ -225,6 +232,15 @@ export default function CalendarPage() {
     }
   }
 
+  // Throttle sync requests to avoid rapid repeated syncing
+  const queueSync = () => {
+    if (isSyncing || syncTimeoutRef.current) return
+    syncTimeoutRef.current = setTimeout(() => {
+      syncTimeoutRef.current = null
+      syncGoogleCalendar()
+    }, 500)
+  }
+
   const clearTableErrorAndRetry = () => {
     toast({
       title: "Retrying Sync",
@@ -246,18 +262,18 @@ export default function CalendarPage() {
       
       // Only sync when explicit events are triggered by user actions
       const handleEventCreated = () => {
-        console.log("Event created, syncing with Google Calendar...")
-        syncGoogleCalendar()
+        console.log("Event created, queueing sync...")
+        queueSync()
       }
-      
+
       const handleEventUpdated = () => {
-        console.log("Event updated, syncing with Google Calendar...")
-        syncGoogleCalendar()
+        console.log("Event updated, queueing sync...")
+        queueSync()
       }
-      
+
       const handleEventDeleted = () => {
-        console.log("Event deleted, syncing with Google Calendar...")
-        syncGoogleCalendar()
+        console.log("Event deleted, queueing sync...")
+        queueSync()
       }
       
       // Set up event listeners for specific user actions only
