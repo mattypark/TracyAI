@@ -43,26 +43,9 @@ export async function GET(request: NextRequest) {
     
     let events = []
     
-    // Try to get events from Google Calendar
+    // Get events from database - DO NOT trigger Google Calendar sync
     try {
-      const { data: tokenData } = await supabase
-        .from('google_tokens')
-        .select('tokens')
-        .eq('user_id', user.id)
-        .eq('service', 'calendar')
-        .single()
-      
-      if (tokenData?.tokens) {
-        const googleEvents = await listEvents(tokenData.tokens)
-        const formattedGoogleEvents = googleEvents.map(formatEventForUI)
-        events.push(...formattedGoogleEvents)
-      }
-    } catch (googleError) {
-      console.log('Google Calendar not connected or error fetching:', googleError)
-    }
-    
-    // Also get local events from database
-    try {
+      // Get ALL events from our database without date filtering
       const { data: localEvents } = await supabase
         .from('calendar_events')
         .select('*')
@@ -178,7 +161,7 @@ export async function POST(request: NextRequest) {
         location: eventData.location || '',
         attendees: eventData.attendees || '',
         flag: eventData.flag || 'personal',
-        flag_color: '#3B82F6',
+        flag_color: eventData.flagColor || '#3B82F6',
         source: 'local',
         status: 'confirmed'
       }
@@ -187,8 +170,8 @@ export async function POST(request: NextRequest) {
 
       // Use the service role key for this operation to bypass RLS temporarily
       const adminSupabase = createClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+        "https://wyzllktxgkmfkbhgyhsf.supabase.co",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind5emxsa3R4Z2ttZmtiaGd5aHNmIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1MDYxMTExOSwiZXhwIjoyMDY2MTg3MTE5fQ.EW7Mxk3ETm9tH-cZw9F_wV0vMY6BDwo9jY6hcpMDL84"
       )
 
       const { data: localEvent, error: localError } = await adminSupabase

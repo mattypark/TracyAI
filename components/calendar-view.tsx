@@ -21,6 +21,7 @@ interface CalendarEvent {
   source: string
   attendees?: string
   meetingLink?: string
+  google_calendar_id?: string
 }
 
 interface CalendarViewProps {
@@ -28,10 +29,12 @@ interface CalendarViewProps {
   currentView: 'day' | 'week' | 'month' | 'year'
   onDateClick: (date: Date) => void
   onDateChange: Dispatch<SetStateAction<Date>>
+  calendars?: { id: string; google_calendar_id: string; name: string; color: string; is_visible: boolean }[]
 }
 
-export function CalendarView({ currentDate, currentView, onDateClick, onDateChange }: CalendarViewProps) {
+export function CalendarView({ currentDate, currentView, onDateClick, onDateChange, calendars = [] }: CalendarViewProps) {
   const [events, setEvents] = useState<CalendarEvent[]>([])
+  const [filteredEvents, setFilteredEvents] = useState<CalendarEvent[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null)
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null)
@@ -41,6 +44,44 @@ export function CalendarView({ currentDate, currentView, onDateClick, onDateChan
   useEffect(() => {
     loadEvents()
   }, [currentDate, currentView])
+
+  // Filter events when calendars visibility changes
+  useEffect(() => {
+    if (events.length > 0 && calendars.length > 0) {
+      const visibleCalendarIds = new Set(
+        calendars
+          .filter(cal => cal.is_visible)
+          .map(cal => cal.google_calendar_id)
+      )
+      
+      // If no calendars are specified or all are hidden, show all events
+      if (visibleCalendarIds.size === 0) {
+        setFilteredEvents(events)
+      } else {
+        // Filter events based on visible calendars
+        const filtered = events.filter(event => {
+          // For events with google_calendar_id, check if that calendar is visible
+          if (event.google_calendar_id) {
+            return visibleCalendarIds.has(event.google_calendar_id)
+          }
+          
+          // For events with flag_name, try to match with calendar name
+          if (event.flag_name) {
+            return calendars.some(cal => 
+              cal.is_visible && cal.name.toLowerCase() === event.flag_name.toLowerCase()
+            )
+          }
+          
+          // Default to showing the event if we can't determine its calendar
+          return true
+        })
+        
+        setFilteredEvents(filtered)
+      }
+    } else {
+      setFilteredEvents(events)
+    }
+  }, [events, calendars])
 
   useEffect(() => {
     // Listen for calendar event creation to refresh the view
@@ -57,7 +98,8 @@ export function CalendarView({ currentDate, currentView, onDateClick, onDateChan
 
   const loadEvents = async () => {
     try {
-      // Load events from the new API that includes both Google and local events
+      setLoading(true)
+      // Load events from the API without triggering any sync
       const { apiGet } = await import('@/lib/api-client')
       const response = await apiGet('/api/calendar/events')
       
@@ -82,7 +124,8 @@ export function CalendarView({ currentDate, currentView, onDateClick, onDateChan
         location: event.location || '',
         source: event.source || 'local',
         attendees: event.attendees || '',
-        meetingLink: event.meetingLink || ''
+        meetingLink: event.meetingLink || '',
+        google_calendar_id: event.google_calendar_id || ''
       }))
       
       setEvents(transformedEvents)
@@ -111,22 +154,90 @@ export function CalendarView({ currentDate, currentView, onDateClick, onDateChan
   const handleSaveEvent = async (eventData: any) => {
     try {
       const { apiPut } = await import('@/lib/api-client')
-      await apiPut(`/api/calendar/events/${eventData.id}`, eventData)
+      const response = await apiPut(`/api/calendar/events/${eventData.id}`, eventData)
+      
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || 'Failed to update event')
+      }
+      
+      const updatedEvent = await response.json()
+      
+      // Close the edit modal
       setEditingEvent(null)
-      loadEvents() // Refresh the events
+      
+      // Update the event locally first
+      setEvents(prevEvents => 
+        prevEvents.map(event => 
+          event.id === eventData.id ? updatedEvent.event : event
+        )
+      )
+      
+      setFilteredEvents(prevEvents => 
+        prevEvents.map(event => 
+          event.id === eventData.id ? updatedEvent.event : event
+        )
+      )
+      
+      // Then trigger a one-time sync with Google Calendar
+      window.dispatchEvent(new CustomEvent('calendarEventUpdated'))
+      
+      // Show success toast
+      const { toast } = await import('@/hooks/use-toast')
+      toast({
+        title: "Event updated",
+        description: "Event has been successfully updated",
+      })
     } catch (error) {
       console.error('Error updating event:', error)
+      
+      // Show error toast
+      const { toast } = await import('@/hooks/use-toast')
+      toast({
+        title: "Error updating event",
+        description: error instanceof Error ? error.message : "Failed to update event",
+        variant: "destructive"
+      })
+      
       throw error
     }
   }
 
   const handleDeleteEvent = async (eventId: string) => {
     try {
+      setSelectedEvent(null); // Close the popup immediately
+      
       const { apiDelete } = await import('@/lib/api-client')
-      await apiDelete(`/api/calendar/events/${eventId}`)
-      loadEvents() // Refresh the events
+      const response = await apiDelete(`/api/calendar/events/${eventId}`)
+      
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || 'Failed to delete event')
+      }
+      
+      // Only refresh events locally first
+      setEvents(prevEvents => prevEvents.filter(event => event.id !== eventId))
+      setFilteredEvents(prevEvents => prevEvents.filter(event => event.id !== eventId))
+      
+      // Then trigger a one-time sync with Google Calendar
+      window.dispatchEvent(new CustomEvent('calendarEventDeleted'))
+      
+      // Show success toast
+      const { toast } = await import('@/hooks/use-toast')
+      toast({
+        title: "Event deleted",
+        description: "Event has been successfully deleted",
+      })
     } catch (error) {
       console.error('Error deleting event:', error)
+      
+      // Show error toast
+      const { toast } = await import('@/hooks/use-toast')
+      toast({
+        title: "Error deleting event",
+        description: error instanceof Error ? error.message : "Failed to delete event",
+        variant: "destructive"
+      })
     }
   }
 
@@ -189,7 +300,7 @@ export function CalendarView({ currentDate, currentView, onDateClick, onDateChan
   }
 
   const getEventsForDate = (date: Date) => {
-    return events.filter((event) => {
+    return filteredEvents.filter((event) => {
       const eventDate = new Date(event.start_time)
       return (
         eventDate.getDate() === date.getDate() &&
@@ -271,32 +382,31 @@ export function CalendarView({ currentDate, currentView, onDateClick, onDateChan
 
                   {/* Events - Limited to prevent overflow */}
                   <div className="flex-1 space-y-0.5 overflow-hidden">
-                    {day.events.slice(0, 2).map((event) => (
+                    {day.events.slice(0, 4).map((event) => (
                       <div
                         key={event.id}
-                        className={`text-xs p-1 rounded cursor-pointer hover:opacity-80 truncate`}
-                        style={{ 
-                          backgroundColor: getFlagColorClass(event.flag_color) + '40', // Add transparency
-                          borderLeft: `3px solid ${getFlagColorClass(event.flag_color)}`,
-                          color: '#333'
-                        }}
+                        className="text-xs py-0.5 rounded cursor-pointer hover:opacity-80 truncate flex items-center"
                         onClick={(e) => handleEventClick(event, e)}
                       >
-                        <div className="flex items-center gap-1">
+                        <div 
+                          className="w-2 h-2 rounded-full mr-1 flex-shrink-0"
+                          style={{ backgroundColor: getFlagColorClass(event.flag_color) }}
+                        ></div>
+                        <div className="flex items-center gap-1 truncate">
+                          {!event.all_day && (
+                            <span className="text-[10px] text-gray-500 dark:text-gray-400 mr-1">
+                              {new Date(event.start_time).toLocaleTimeString('en-US', { 
+                                hour: 'numeric', 
+                                minute: '2-digit',
+                                hour12: true 
+                              })}
+                            </span>
+                          )}
                           <span className="truncate font-medium">{event.title}</span>
                         </div>
-                        {!event.all_day && (
-                          <div className="text-[10px] text-gray-500 dark:text-gray-400">
-                            {new Date(event.start_time).toLocaleTimeString('en-US', { 
-                              hour: 'numeric', 
-                              minute: '2-digit',
-                              hour12: true 
-                            })}
-                          </div>
-                        )}
                       </div>
                     ))}
-                    {day.events.length > 2 && (
+                    {day.events.length > 4 && (
                       <button
                         className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
                         onClick={(e) => {
@@ -304,7 +414,7 @@ export function CalendarView({ currentDate, currentView, onDateClick, onDateChan
                           showEventsListModal(day.date, day.events)
                         }}
                       >
-                        +{day.events.length - 2} more
+                        +{day.events.length - 4} more
                       </button>
                     )}
                   </div>

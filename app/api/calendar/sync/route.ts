@@ -135,6 +135,7 @@ export async function POST(request: NextRequest) {
     }
     
     const tokens = tokenData.tokens
+    const lastSyncTime = tokens.last_sync ? new Date(tokens.last_sync) : null
     
     // Get all user's calendars
     const calendars = await getCalendarList(tokens)
@@ -206,50 +207,65 @@ export async function POST(request: NextRequest) {
       console.log('Skipping calendar metadata sync - calendars table does not exist')
     }
     
-    let totalEventsSynced = 0
-    const syncResults = []
+    let totalEventsSynced = 0;
+    const syncResults = [];
     
     // Sync events from each calendar
     for (const calendar of calendars) {
-      if (!calendar.id) continue
+      if (!calendar.id) continue;
       
       try {
-        console.log(`Syncing calendar: ${calendar.summary} (${calendar.id})`)
+        console.log(`Syncing calendar: ${calendar.summary} (${calendar.id})`);
         
         // Get events from this calendar (6 months forward and 3 months back)
-        const now = new Date()
-        const pastDate = new Date()
-        pastDate.setMonth(pastDate.getMonth() - 3)
-        const futureDate = new Date()
-        futureDate.setMonth(futureDate.getMonth() + 6)
+        const now = new Date();
+        const pastDate = new Date();
+        pastDate.setMonth(pastDate.getMonth() - 3);
+        const futureDate = new Date();
+        futureDate.setMonth(futureDate.getMonth() + 6);
         
-        const events = await listEvents(tokens, calendar.id, 250)
-        console.log(`Found ${events.length} events in calendar ${calendar.summary}`)
+        // If we have a last sync time, only get events updated since then
+        const updatedMin = lastSyncTime ? lastSyncTime.toISOString() : undefined;
+        
+        // Get events from Google Calendar with proper options
+        const events = await listEvents(tokens, calendar.id, 250, { updatedMin });
+        console.log(`Found ${events.length} events in calendar ${calendar.summary}`);
+        
+        if (events.length === 0) {
+          // No events to sync for this calendar
+          syncResults.push({
+            calendar: calendar.summary,
+            success: true,
+            eventCount: 0,
+            message: 'No new or updated events'
+          });
+          continue;
+        }
         
         // Transform events for database
         const transformedEvents = events.map(event => {
           // Handle date/time formatting
-          let startTime, endTime, allDay = false
+          let startTime, endTime, allDay = false;
           
           if (event.start?.date) {
             // All-day event
-            startTime = event.start.date + 'T00:00:00'
-            endTime = event.end?.date + 'T23:59:59'
-            allDay = true
+            startTime = event.start.date + 'T00:00:00';
+            endTime = event.end?.date + 'T23:59:59';
+            allDay = true;
           } else if (event.start?.dateTime) {
             // Timed event
-            startTime = event.start.dateTime
-            endTime = event.end?.dateTime || startTime
-            allDay = false
+            startTime = event.start.dateTime;
+            endTime = event.end?.dateTime || startTime;
+            allDay = false;
           } else {
             // Fallback
-            startTime = new Date().toISOString()
-            endTime = new Date().toISOString()
-            allDay = false
+            startTime = new Date().toISOString();
+            endTime = new Date().toISOString();
+            allDay = false;
           }
           
           // Get the proper calendar color
-          const calendarColor = getCalendarColor(calendar)
+          const calendarColor = getCalendarColor(calendar);
           
           // Create event object with the correct column names from the database
           return {
@@ -269,56 +285,52 @@ export async function POST(request: NextRequest) {
             flag_color: calendarColor,
             created_at: event.created || new Date().toISOString(),
             updated_at: event.updated || new Date().toISOString()
-          }
-        })
+          };
+        });
         
         // Batch insert/update events
         if (transformedEvents.length > 0) {
-          // First, delete existing events from this calendar to avoid duplicates
-          await supabase
+          // For each event, upsert (update or insert)
+          const { error: upsertError } = await supabase
             .from('calendar_events')
-            .delete()
-            .eq('user_id', user.id)
-            .eq('google_calendar_id', calendar.id)
+            .upsert(transformedEvents, {
+              onConflict: 'user_id,google_event_id',
+              ignoreDuplicates: false
+            });
           
-          // Insert new events
-          const { error: insertError } = await supabase
-            .from('calendar_events')
-            .insert(transformedEvents)
-          
-          if (insertError) {
-            console.error(`Error inserting events for calendar ${calendar.summary}:`, insertError)
+          if (upsertError) {
+            console.error(`Error upserting events for calendar ${calendar.summary}:`, upsertError);
             syncResults.push({
               calendar: calendar.summary,
               success: false,
-              error: insertError.message,
+              error: upsertError.message,
               eventCount: 0
-            })
+            });
           } else {
-            totalEventsSynced += transformedEvents.length
+            totalEventsSynced += transformedEvents.length;
             syncResults.push({
               calendar: calendar.summary,
               success: true,
               eventCount: transformedEvents.length
-            })
-            console.log(`Successfully synced ${transformedEvents.length} events from ${calendar.summary}`)
+            });
+            console.log(`Successfully synced ${transformedEvents.length} events from ${calendar.summary}`);
           }
         } else {
           syncResults.push({
             calendar: calendar.summary,
             success: true,
             eventCount: 0
-          })
+          });
         }
         
       } catch (calendarError) {
-        console.error(`Error syncing calendar ${calendar.summary}:`, calendarError)
+        console.error(`Error syncing calendar ${calendar.summary}:`, calendarError);
         syncResults.push({
           calendar: calendar.summary,
           success: false,
           error: calendarError instanceof Error ? calendarError.message : String(calendarError),
           eventCount: 0
-        })
+        });
       }
     }
     
@@ -330,9 +342,9 @@ export async function POST(request: NextRequest) {
         tokens: { ...tokens, last_sync: new Date().toISOString() }
       })
       .eq('user_id', user.id)
-      .eq('service', 'calendar')
+      .eq('service', 'calendar');
     
-    console.log(`Sync completed. Total events synced: ${totalEventsSynced}`)
+    console.log(`Sync completed. Total events synced: ${totalEventsSynced}`);
     
     return NextResponse.json({
       success: true,
@@ -341,13 +353,13 @@ export async function POST(request: NextRequest) {
       calendarsCount: calendars.length,
       calendarsSync: calendarSyncResults,
       eventsSync: syncResults
-    })
+    });
     
   } catch (error) {
-    console.error('Calendar sync error:', error)
+    console.error('Calendar sync error:', error);
     return NextResponse.json(
       { error: 'Failed to sync calendar events', details: error instanceof Error ? error.message : String(error) },
       { status: 500 }
-    )
+    );
   }
 } 

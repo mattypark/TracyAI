@@ -86,8 +86,10 @@ export function GoogleCalendarModal({ selectedDate, onClose }: GoogleCalendarMod
       let startDateTime, endDateTime
 
       if (formData.allDay) {
-        startDateTime = new Date(`${formData.date}T00:00:00`)
-        endDateTime = new Date(`${formData.date}T23:59:59`)
+        // For all-day events, use the date only
+        const date = new Date(formData.date)
+        startDateTime = new Date(date.setHours(0, 0, 0, 0))
+        endDateTime = new Date(date.setHours(23, 59, 59, 999))
       } else {
         if (!formData.startTime || !formData.endTime) {
           console.log("Using default times for event")
@@ -114,6 +116,7 @@ export function GoogleCalendarModal({ selectedDate, onClose }: GoogleCalendarMod
         meetingLink: formData.meetingLink || "",
         allDay: formData.allDay,
         flag: userFlags.find(f => f.id === formData.flagId)?.name || "personal",
+        flagColor: userFlags.find(f => f.id === formData.flagId)?.color || "#3B82F6",
         reminderMinutes: parseInt(formData.notification) || 10,
         visibility: formData.visibility
       })
@@ -126,15 +129,14 @@ export function GoogleCalendarModal({ selectedDate, onClose }: GoogleCalendarMod
       const result = await response.json()
       console.log("Event created successfully:", result)
       
-      onClose()
-      
       // Trigger a custom event to refresh the calendar view
       window.dispatchEvent(new CustomEvent('calendarEventCreated'))
+      
+      onClose()
     } catch (error) {
       console.error("Error creating event:", error)
-      // Show error to user but still close modal
+      // Show error to user
       alert(`Error creating event: ${error instanceof Error ? error.message : 'Unknown error'}`)
-      onClose()
     } finally {
       setLoading(false)
     }

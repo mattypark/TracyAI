@@ -73,23 +73,32 @@ export async function getCalendarList(tokens: any) {
 }
 
 // Get events from a specific calendar
-export async function listEvents(tokens: any, calendarId = 'primary', maxResults = 250) {
+export async function listEvents(tokens: any, calendarId = 'primary', maxResults = 250, options: any = {}) {
   try {
     const auth = getOAuthClient(tokens)
     const calendar = google.calendar({ version: 'v3', auth })
     
     const now = new Date()
+    const pastDate = new Date()
+    pastDate.setMonth(pastDate.getMonth() - 3) // Get events from 3 months ago
     const futureDate = new Date()
     futureDate.setMonth(futureDate.getMonth() + 6) // Get 6 months of events
     
-    const response = await calendar.events.list({
+    const params: any = {
       calendarId,
-      timeMin: now.toISOString(),
-      timeMax: futureDate.toISOString(),
+      timeMin: options.timeMin || pastDate.toISOString(),
+      timeMax: options.timeMax || futureDate.toISOString(),
       maxResults,
       singleEvents: true,
       orderBy: 'startTime',
-    })
+    }
+    
+    // If updatedMin is provided, add it to the request
+    if (options.updatedMin) {
+      params.updatedMin = options.updatedMin
+    }
+    
+    const response = await calendar.events.list(params)
     
     return response.data.items || []
   } catch (error) {

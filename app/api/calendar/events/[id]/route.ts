@@ -6,8 +6,9 @@ import { cookies } from 'next/headers'
 // PUT - Update an existing event
 export async function PUT(request: NextRequest, { params }: { params: { id: string } }) {
   try {
+    const { id } = await params
     const eventData = await request.json()
-    const eventId = params.id
+    const eventId = id
     
     // Create Supabase client
     const supabase = createClient(
@@ -45,8 +46,8 @@ export async function PUT(request: NextRequest, { params }: { params: { id: stri
     
     // Use admin client for database operations
     const adminSupabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+      "https://wyzllktxgkmfkbhgyhsf.supabase.co",
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind5emxsa3R4Z2ttZmtiaGd5aHNmIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1MDYxMTExOSwiZXhwIjoyMDY2MTg3MTE5fQ.EW7Mxk3ETm9tH-cZw9F_wV0vMY6BDwo9jY6hcpMDL84"
     )
     
     // First, get the existing event to check if it's a Google event
@@ -122,7 +123,8 @@ export async function PUT(request: NextRequest, { params }: { params: { id: stri
 // DELETE - Delete an event
 export async function DELETE(request: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const eventId = params.id
+    const { id } = await params
+    const eventId = id
     
     // Create Supabase client
     const supabase = createClient(
@@ -160,8 +162,8 @@ export async function DELETE(request: NextRequest, { params }: { params: { id: s
     
     // Use admin client for database operations
     const adminSupabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+      "https://wyzllktxgkmfkbhgyhsf.supabase.co",
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind5emxsa3R4Z2ttZmtiaGd5aHNmIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1MDYxMTExOSwiZXhwIjoyMDY2MTg3MTE5fQ.EW7Mxk3ETm9tH-cZw9F_wV0vMY6BDwo9jY6hcpMDL84"
     )
     
     // First, get the existing event to check if it's a Google event
@@ -187,10 +189,15 @@ export async function DELETE(request: NextRequest, { params }: { params: { id: s
           .single()
         
         if (tokenData?.tokens) {
-          await deleteGoogleEvent(tokenData.tokens, existingEvent.google_event_id)
+          // Use the google_calendar_id from the event to delete from the correct calendar
+          const calendarId = existingEvent.google_calendar_id || 'primary'
+          await deleteGoogleEvent(tokenData.tokens, existingEvent.google_event_id, calendarId)
+          console.log(`Deleted event ${existingEvent.google_event_id} from calendar ${calendarId}`)
         }
       } catch (googleError) {
-        console.log('Failed to delete Google Calendar event:', googleError)
+        console.error('Failed to delete Google Calendar event:', googleError)
+        // Don't fail the whole operation if Google Calendar delete fails
+        // User can manually delete from Google Calendar
       }
     }
     

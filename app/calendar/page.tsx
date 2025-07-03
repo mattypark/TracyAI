@@ -241,15 +241,36 @@ export default function CalendarPage() {
 
   useEffect(() => {
     if (user && !loading) {
+      // Only load calendars - NO automatic sync
       loadCalendars()
-      syncGoogleCalendar()
       
-      // Set up automatic sync every 10 minutes
-      const syncInterval = setInterval(() => {
+      // Only sync when explicit events are triggered by user actions
+      const handleEventCreated = () => {
+        console.log("Event created, syncing with Google Calendar...")
         syncGoogleCalendar()
-      }, 10 * 60 * 1000) // 10 minutes
+      }
       
-      return () => clearInterval(syncInterval)
+      const handleEventUpdated = () => {
+        console.log("Event updated, syncing with Google Calendar...")
+        syncGoogleCalendar()
+      }
+      
+      const handleEventDeleted = () => {
+        console.log("Event deleted, syncing with Google Calendar...")
+        syncGoogleCalendar()
+      }
+      
+      // Set up event listeners for specific user actions only
+      window.addEventListener('calendarEventCreated', handleEventCreated)
+      window.addEventListener('calendarEventUpdated', handleEventUpdated)
+      window.addEventListener('calendarEventDeleted', handleEventDeleted)
+      
+      return () => {
+        // Clean up listeners
+        window.removeEventListener('calendarEventCreated', handleEventCreated)
+        window.removeEventListener('calendarEventUpdated', handleEventUpdated)
+        window.removeEventListener('calendarEventDeleted', handleEventDeleted)
+      }
     }
   }, [user, loading])
 
@@ -339,9 +360,9 @@ export default function CalendarPage() {
 
           <div className="flex items-center space-x-3">
             <Button 
-              variant="ghost" 
+              variant="outline" 
               size="sm" 
-              className="px-3"
+              className="px-3 border-blue-500 text-blue-600 hover:bg-blue-50"
               onClick={syncGoogleCalendar}
               disabled={isSyncing}
             >
@@ -354,7 +375,7 @@ export default function CalendarPage() {
               ) : (
                 <RefreshCw className="w-4 h-4 mr-2" />
               )}
-              {syncStatus === 'syncing' ? 'Syncing...' : 'Sync Calendar'}
+              {syncStatus === 'syncing' ? 'Syncing...' : 'Manual Sync'}
             </Button>
             
             <Button variant="ghost" size="sm" className="px-3">
@@ -385,10 +406,6 @@ export default function CalendarPage() {
               </DropdownMenuContent>
             </DropdownMenu>
 
-            <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={handleOpenSettings}>
-              <Settings className="w-4 h-4" />
-            </Button>
-
             <Avatar className="w-8 h-8">
               <AvatarImage src={user?.user_metadata?.avatar_url} />
               <AvatarFallback>
@@ -411,7 +428,7 @@ export default function CalendarPage() {
             </Button>
           </div>
 
-          {/* Mini Calendar */}
+          {/* Mini Calendar - Fixed section */}
           <div className="px-4 pb-6">
             <div className="bg-white dark:bg-gray-900">
               <div className="flex items-center justify-between mb-3">
@@ -472,13 +489,18 @@ export default function CalendarPage() {
                     return (
                       <button
                         key={i}
+                        className={`text-center py-1 text-xs rounded-full w-6 h-6 mx-auto flex items-center justify-center ${
+                          isToday
+                            ? 'bg-blue-600 text-white'
+                            : isSelected
+                            ? 'bg-gray-200 dark:bg-gray-700'
+                            : 'hover:bg-gray-100 dark:hover:bg-gray-800'
+                        } ${
+                          day.isCurrentMonth
+                            ? 'text-gray-900 dark:text-gray-100'
+                            : 'text-gray-400 dark:text-gray-600'
+                        }`}
                         onClick={() => setCurrentDate(day.date)}
-                        className={`
-                          text-xs h-6 w-6 rounded-full flex items-center justify-center hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors
-                          ${!day.isCurrentMonth ? 'text-gray-400 dark:text-gray-600' : 'text-gray-900 dark:text-gray-100'}
-                          ${isToday ? 'bg-blue-600 text-white hover:bg-blue-700' : ''}
-                          ${isSelected && !isToday ? 'bg-gray-200 dark:bg-gray-700' : ''}
-                        `}
                       >
                         {day.date.getDate()}
                       </button>
@@ -489,90 +511,65 @@ export default function CalendarPage() {
             </div>
           </div>
 
-          <div className="px-4 pb-6">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+          {/* Scrollable Calendar List */}
+          <div className="px-4 overflow-y-auto flex-1" style={{ maxHeight: "calc(100vh - 300px)" }}>
+            <div className="mb-2">
               <input
                 type="text"
                 placeholder="Search for people"
-                className="w-full pl-9 pr-3 py-2 text-sm bg-gray-100 dark:bg-gray-800 border-0 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 dark:text-gray-100 placeholder-gray-500"
+                className="w-full px-3 py-2 text-sm bg-gray-100 dark:bg-gray-800 border-0 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
-          </div>
 
-          <div className="flex-1 overflow-y-auto">
-            <div className="px-4 pb-6">
-              <div className="flex items-center justify-between mb-3">
+            <div className="mt-6">
+              <div className="flex items-center justify-between mb-2">
                 <h3 className="text-sm font-medium text-gray-900 dark:text-white">My calendars</h3>
-                <Button variant="ghost" size="sm" className="h-6 w-6 p-0">
-                  <ChevronDown className="w-4 h-4" />
+                <Button variant="ghost" size="sm" className="h-6 w-6 p-0 hover:bg-gray-100 dark:hover:bg-gray-800">
+                  <ChevronDown className="w-3 h-3" />
                 </Button>
               </div>
-              <div className="space-y-2">
+              
+              <div className="space-y-1">
                 {loadingCalendars ? (
                   <div className="text-sm text-gray-500 dark:text-gray-400">Loading calendars...</div>
                 ) : calendars.length === 0 ? (
                   <div className="text-sm text-gray-500 dark:text-gray-400">No calendars found. Try syncing your Google Calendar.</div>
                 ) : (
-                  calendars
-                    .filter(cal => cal.source === 'google' && !cal.name.includes('Holidays'))
-                    .map(calendar => (
-                      <div key={calendar.id} className="flex items-center space-x-3 py-1 px-2 rounded hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer">
-                        <input 
-                          type="checkbox" 
-                          checked={calendar.is_visible} 
-                          onChange={(e) => toggleCalendarVisibility(calendar.id, e.target.checked)}
-                          className="w-3 h-3 rounded" 
-                          style={{ accentColor: calendar.color }}
-                        />
-                        <div 
-                          className="w-3 h-3 rounded-sm" 
-                          style={{ backgroundColor: calendar.color }}
-                        ></div>
-                        <span className="text-sm text-gray-700 dark:text-gray-300 truncate" title={calendar.name}>
-                          {calendar.name}
-                        </span>
-                      </div>
-                    ))
-                )}
-              </div>
-            </div>
-
-            {/* Other Calendars */}
-            <div className="px-4 pb-6">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-medium text-gray-900 dark:text-white">Other calendars</h3>
-                <div className="flex space-x-1">
-                  <Button variant="ghost" size="sm" className="h-6 w-6 p-0">
-                    <Plus className="w-4 h-4" />
-                  </Button>
-                  <Button variant="ghost" size="sm" className="h-6 w-6 p-0">
-                    <ChevronDown className="w-4 h-4" />
-                  </Button>
-                </div>
-              </div>
-              <div className="space-y-2">
-                {calendars
-                  .filter(cal => cal.source === 'google' && (cal.name.includes('Holidays') || cal.name.includes('Birthdays')))
-                  .map(calendar => (
-                    <div key={calendar.id} className="flex items-center space-x-3 py-1 px-2 rounded hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer">
-                      <input 
-                        type="checkbox" 
-                        checked={calendar.is_visible} 
-                        onChange={(e) => toggleCalendarVisibility(calendar.id, e.target.checked)}
-                        className="w-3 h-3 rounded" 
-                        style={{ accentColor: calendar.color }}
+                  calendars.map((calendar) => (
+                    <div
+                      key={calendar.id}
+                      className="flex items-center py-1.5 px-2 hover:bg-gray-50 dark:hover:bg-gray-800 rounded cursor-pointer"
+                      onClick={() => toggleCalendarVisibility(calendar.id, !calendar.is_visible)}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={calendar.is_visible}
+                        onChange={(e) => {
+                          e.stopPropagation()
+                          toggleCalendarVisibility(calendar.id, e.target.checked)
+                        }}
+                        className="h-3.5 w-3.5 rounded border-2"
+                        style={{ 
+                          borderColor: calendar.color,
+                          backgroundColor: calendar.is_visible ? calendar.color : 'transparent',
+                          accentColor: calendar.color
+                        }}
                       />
-                      <div 
-                        className="w-3 h-3 rounded-sm" 
-                        style={{ backgroundColor: calendar.color }}
-                      ></div>
-                      <span className="text-sm text-gray-700 dark:text-gray-300 truncate" title={calendar.name}>
+                      <span className="ml-3 text-sm text-gray-700 dark:text-gray-300 truncate">
                         {calendar.name}
                       </span>
                     </div>
                   ))
-                }
+                )}
+              </div>
+            </div>
+
+            <div className="mt-6">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-sm font-medium text-gray-900 dark:text-white">Other calendars</h3>
+                <Button variant="ghost" size="sm" className="h-6 w-6 p-0 hover:bg-gray-100 dark:hover:bg-gray-800">
+                  <Plus className="w-3 h-3" />
+                </Button>
               </div>
             </div>
           </div>
@@ -584,6 +581,7 @@ export default function CalendarPage() {
             currentView={currentView}
             onDateClick={handleDateClick}
             onDateChange={setCurrentDate}
+            calendars={calendars}
           />
         </div>
       </div>
